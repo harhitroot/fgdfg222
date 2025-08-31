@@ -38,7 +38,7 @@ const UPLOAD_DELAY_CONFIG = 20; // Ultra-minimal delay for maximum throughput
 const CHUNK_SIZE_CONFIG = 32 * 1024 * 1024; // Increased to 32MB for maximum throughput
 
 // ULTRA-HIGH-SPEED CONFIGURATIONS
-const BATCH_SIZE = 10; // Increased batch size for better parallel processing
+const BATCH_SIZE = 3; // Increased batch size for better parallel processing
 const CONNECTION_POOL_SIZE = 8; // More connection pools for stability
 const SPEED_STABILIZATION_DELAY = 25; // Ultra-minimal stabilization delay
 const THROUGHPUT_OPTIMIZATION_MODE = true;

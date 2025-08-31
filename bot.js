@@ -3,14 +3,15 @@ const { spawn, exec } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const express = require("express");
+const readline = require('readline');
 
-// Bot token from environment
-const BOT_TOKEN = process.env.BOT_TOKEN || "your_bot_token_here";
+// Bot token management
+let BOT_TOKEN = process.env.BOT_TOKEN;
 const REPO_URL = "https://github.com/adamfarreledu-cloud/java.git";
 const REPO_DIR = "./java";
 
-// Initialize bot
-const bot = new Telegraf(BOT_TOKEN);
+// Initialize bot (will be set after token is confirmed)
+let bot;
 
 // User session storage
 const userSessions = new Map();
@@ -406,6 +407,8 @@ function killUserProcess(userId) {
     stopProgressTimer(userId);
 }
 
+// Setup bot event handlers
+function setupBotHandlers() {
 // Start command
 bot.command("start", (ctx) => {
     const session = getUserSession(ctx.from.id);
@@ -946,6 +949,8 @@ bot.on("text", (ctx) => {
     }
 });
 
+} // End of setupBotHandlers function
+
 // Handle bot stop
 process.on("SIGINT", () => {
     console.log("Bot and server are stopping...");
@@ -975,7 +980,7 @@ process.on("SIGTERM", () => {
 
 // Express.js Web Server Setup
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 
 // Serve static files and handle requests
 app.use(express.static("public"));
@@ -1148,16 +1153,116 @@ app.get("/health", (req, res) => {
     });
 });
 
+// UptimeRobot compatible ping endpoint
+app.get("/ping", (req, res) => {
+    res.status(200).send("pong");
+});
+
+// Keep-alive endpoint for monitoring services
+app.get("/keep-alive", (req, res) => {
+    res.json({
+        alive: true,
+        timestamp: Date.now(),
+        uptime: Math.floor(process.uptime()),
+        message: "Service is active"
+    });
+});
+
+// Self-ping functionality to prevent sleeping
+function startSelfPing() {
+    const SELF_PING_INTERVAL = 5 * 60 * 1000; // 5 minutes
+    
+    setInterval(() => {
+        // Self-ping to keep service alive
+        const http = require('http');
+        const url = process.env.RENDER_EXTERNAL_URL || 
+                   process.env.RAILWAY_STATIC_URL || 
+                   `http://localhost:${PORT}`;
+        
+        const pingUrl = url.includes('localhost') ? 
+                       `${url}/ping` : 
+                       `${url}/ping`;
+        
+        http.get(pingUrl, (res) => {
+            console.log(`🏓 Self-ping successful: ${res.statusCode}`);
+        }).on('error', (err) => {
+            console.log(`🏓 Self-ping failed: ${err.message}`);
+        });
+    }, SELF_PING_INTERVAL);
+    
+    console.log(`🏓 Self-ping started - pinging every ${SELF_PING_INTERVAL / 60000} minutes`);
+}
+
 // Start Express server
 const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`🌐 Web dashboard running on port ${PORT}`);
     console.log(`📊 Dashboard: http://localhost:${PORT}`);
     console.log(`📡 Progress API: http://localhost:${PORT}/progress`);
     console.log(`💚 Health check: http://localhost:${PORT}/health`);
+    console.log(`🏓 Ping endpoint: http://localhost:${PORT}/ping`);
+    console.log(`⏰ Keep-alive: http://localhost:${PORT}/keep-alive`);
+    
+    // Start self-ping after server is running
+    startSelfPing();
 });
+
+// Function to get bot token from user input
+async function getBotToken() {
+    return new Promise((resolve) => {
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
+        
+        console.log('\n🤖 Telegram Bot Token Required');
+        console.log('===============================');
+        console.log('You can get your bot token from @BotFather on Telegram:');
+        console.log('1. Send /newbot to @BotFather');
+        console.log('2. Choose a name and username for your bot');
+        console.log('3. Copy the token you receive');
+        console.log('');
+        
+        rl.question('Please enter your Telegram Bot Token: ', (token) => {
+            rl.close();
+            if (token && token.trim() && token.includes(':')) {
+                resolve(token.trim());
+            } else {
+                console.log('❌ Invalid token format. Please try again.');
+                getBotToken().then(resolve);
+            }
+        });
+    });
+}
+
+// Initialize bot with token
+async function initializeBot(token) {
+    try {
+        bot = new Telegraf(token);
+        
+        // Test the token by getting bot info
+        const botInfo = await bot.telegram.getMe();
+        console.log(`✅ Bot initialized successfully: @${botInfo.username}`);
+        return true;
+    } catch (error) {
+        console.log(`❌ Failed to initialize bot: ${error.message}`);
+        return false;
+    }
+}
 
 // Start the bot
 async function startBot() {
+    // Check if we have a valid bot token
+    if (!BOT_TOKEN || BOT_TOKEN === 'your_bot_token_here' || !BOT_TOKEN.includes(':')) {
+        console.log('⚠️ No valid bot token found in environment variables.');
+        BOT_TOKEN = await getBotToken();
+    }
+    
+    // Initialize bot with the token
+    const botInitialized = await initializeBot(BOT_TOKEN);
+    if (!botInitialized) {
+        console.log('❌ Bot initialization failed. Exiting...');
+        process.exit(1);
+    }
     try {
         // Only clone if repository doesn't exist
         if (!fs.existsSync(REPO_DIR)) {
@@ -1193,6 +1298,10 @@ async function startBot() {
 
         console.log("Starting Telegram bot...");
         console.log("Bot token present:", !!BOT_TOKEN);
+        console.log("Bot token length:", BOT_TOKEN ? BOT_TOKEN.length : 0);
+
+        // Setup bot event handlers
+        setupBotHandlers();
 
         // Clear any existing webhooks before launching
         await bot.telegram.deleteWebhook({ drop_pending_updates: true });

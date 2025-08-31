@@ -43,7 +43,7 @@ const CONNECTION_POOL_SIZE = 8; // More connection pools for stability
 const SPEED_STABILIZATION_DELAY = 25; // Ultra-minimal stabilization delay
 const THROUGHPUT_OPTIMIZATION_MODE = true;
 const AGGRESSIVE_SPEED_MODE = true; // Enabled for maximum speed
-const TARGET_SPEED_MBPS = 35; // Increased target to 35 Mbps for headroom
+const TARGET_SPEED_MBPS = 100; // Increased target to 35 Mbps for headroom
 
 /**
  * Ultra-High-Speed Telegram Channel Downloader with Consistent 30+ Mbps Performance

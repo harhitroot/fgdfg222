@@ -163,34 +163,43 @@ function isDuplicateMessage(userId, message) {
         '⏳ Processing... Downloads continuing in background..',
         '📊 Current Internet Speed:'
     ];
-    
+
     // Check if message starts with any allowed message pattern
     if (allowedMessages.some(allowed => message.includes(allowed))) {
         return false; // Never block these messages
     }
-    
+
     if (!sentMessages.has(userId)) {
         sentMessages.set(userId, new Set());
     }
-    
+
     const messageHash = generateMessageHash(message);
     const userHashes = sentMessages.get(userId);
-    
+
     if (userHashes.has(messageHash)) {
         return true; // Duplicate found
     }
-    
+
     // Add to sent messages
     userHashes.add(messageHash);
-    
+
     // Clean up old hashes (keep last 100)
     if (userHashes.size > 100) {
         const oldestHash = userHashes.values().next().value;
         userHashes.delete(oldestHash);
     }
-    
+
     return false;
 }
+
+// Clear duplicate message history for a user
+function clearUserDuplicates(userId) {
+    if (sentMessages.has(userId)) {
+        sentMessages.delete(userId);
+        console.log(`🧹 Cleared duplicate message history for user ${userId}`);
+    }
+}
+
 
 // Check if command is network intensive (download/upload)
 function isNetworkIntensiveCommand(command) {
@@ -199,7 +208,7 @@ function isNetworkIntensiveCommand(command) {
         'npm install', 'pip install', 'apt install', 'yum install',
         'rsync', 'scp', 'ftp', 'sftp', 'aria2c'
     ];
-    
+
     return networkKeywords.some(keyword => 
         command.toLowerCase().includes(keyword.toLowerCase())
     );
@@ -210,10 +219,10 @@ function startSpeedMonitoring(userId, ctx) {
     if (speedMonitorIntervals.has(userId)) {
         clearInterval(speedMonitorIntervals.get(userId));
     }
-    
+
     speedMonitor.startMonitoring();
     sendRateLimitedMessage(ctx, '⏳ Download/Upload started...');
-    
+
     // Send speed updates every 2 minutes
     const intervalId = setInterval(async () => {
         const speedInfo = await speedMonitor.getCurrentSpeed();
@@ -222,10 +231,10 @@ function startSpeedMonitoring(userId, ctx) {
 - Upload: ${speedInfo.upload} MB/s
 - Total: ${speedInfo.total} MB/s
 (Updates every 2 min)`;
-        
+
         sendRateLimitedMessage(ctx, speedMessage);
     }, 120000); // 2 minutes
-    
+
     speedMonitorIntervals.set(userId, intervalId);
 }
 
@@ -330,9 +339,9 @@ async function processMessageQueue(userId) {
             if ((error.errno === -122 || error.message.includes('system error -122') || error.message.includes('Unknown system error -122')) && retries > 0) {
                 console.log(`⚠️ Warning: Write operation failed with system error -122.`);
                 console.log(`Retrying in 5 seconds... (${retries} attempts left)`);
-                
+
                 await new Promise((resolve) => setTimeout(resolve, 5000)); // 5 second delay for -122 errors
-                
+
                 queue.unshift({
                     message,
                     retries: retries - 1,
@@ -413,10 +422,13 @@ function setupBotHandlers() {
 bot.command("start", (ctx) => {
     const session = getUserSession(ctx.from.id);
     killUserProcess(ctx.from.id);
-    session.state = STATES.AWAITING_CONSENT;
+    
+    // Clear any previous duplicate history for fresh session
+    clearUserDuplicates(ctx.from.id);
 
-    // UPDATE PROGRESS: User started bot session
-    updateProgress("active", "User starting authentication process", 0, 100);
+    session.state = STATES.AWAITING_CONSENT;
+    updateProgress(
+        "active", "User starting authentication process", 0, 100);
 
     ctx.reply(
         "🚨 *SECURITY WARNING* 🚨\n\n" +
@@ -440,6 +452,25 @@ bot.command("cancel", (ctx) => {
     killUserProcess(ctx.from.id);
     session.state = STATES.IDLE;
     ctx.reply("❌ Operation cancelled. Use /start to begin again.");
+});
+
+// Reset command
+bot.command("reset", (ctx) => {
+    const userId = ctx.from.id;
+    const session = getUserSession(userId);
+    // Clear duplicate history on reset
+    clearUserDuplicates(userId);
+
+    session.state = STATES.IDLE;
+    session.process = null;
+    session.phone = null;
+    session.channel = null;
+    session.option = null;
+    session.destination = null;
+    session.apiId = null;
+    session.apiHash = null;
+    session.progressMessageId = null;
+    ctx.reply('🔄 Session reset. Duplicate history cleared. Send /start to begin again.');
 });
 
 // Status command
@@ -739,6 +770,9 @@ function spawnCliProcess(userId, ctx) {
                 stopProgressTimer(userId);
                 stopSpeedMonitoring(userId);
 
+                // Reset duplicate message history after successful completion
+                clearUserDuplicates(userId);
+
                 // Reset to idle after 30 seconds
                 setTimeout(() => {
                     if (userSessions.size === 0) {
@@ -766,7 +800,7 @@ function spawnCliProcess(userId, ctx) {
     process.on("close", (code) => {
         session.state = STATES.IDLE;
         session.process = null;
-        
+
         // Stop speed monitoring when process ends
         stopSpeedMonitoring(userId);
         stopProgressTimer(userId);
@@ -786,11 +820,11 @@ function spawnCliProcess(userId, ctx) {
     process.on("error", (error) => {
         session.state = STATES.IDLE;
         session.process = null;
-        
+
         // Stop speed monitoring on error
         stopSpeedMonitoring(userId);
         stopProgressTimer(userId);
-        
+
         ctx.reply(`❌ Process error: ${error.message}`);
     });
 }
@@ -815,7 +849,8 @@ bot.on("text", (ctx) => {
         case STATES.AWAITING_CONSENT:
             if (message.toUpperCase() === "I CONSENT") {
                 ctx.reply(
-                    "✅ Consent received.\n\n🔑 Please enter your Telegram API ID:",
+                    "✅ Consent received.\n\n" +
+                    "🔑 Please enter your Telegram API ID:",
                 );
                 session.state = STATES.AWAITING_API_ID;
             } else {
@@ -829,7 +864,8 @@ bot.on("text", (ctx) => {
             if (/^\d+$/.test(message)) {
                 session.apiId = message;
                 ctx.reply(
-                    "✅ API ID saved.\n\n🗝️ Now enter your Telegram API Hash:",
+                    "✅ API ID saved.\n\n" +
+                    "🗝️ Now enter your Telegram API Hash:",
                 );
                 session.state = STATES.AWAITING_API_HASH;
             } else {
@@ -843,7 +879,8 @@ bot.on("text", (ctx) => {
             if (message.length > 10) {
                 session.apiHash = message;
                 ctx.reply(
-                    "✅ API Hash saved.\n\n🚀 Starting the script with your credentials...",
+                    "✅ API Hash saved.\n\n" +
+                    "🚀 Starting the script with your credentials...",
                 );
                 session.state = STATES.PROCESSING;
                 spawnCliProcess(userId, ctx);
@@ -858,7 +895,8 @@ bot.on("text", (ctx) => {
             session.phone = message;
             if (sendToProcess(userId, message)) {
                 ctx.reply(
-                    `📱 Phone number sent: ${message}\nWaiting for OTP...`,
+                    `📱 Phone number sent: ${message}\n` +
+                    `Waiting for OTP...`,
                 );
             } else {
                 ctx.reply(
@@ -873,7 +911,8 @@ bot.on("text", (ctx) => {
 
             if (cleanOtp.length >= 4) {
                 if (sendToProcess(userId, cleanOtp)) {
-                    ctx.reply(`🔐 OTP processed and sent\nVerifying...`);
+                    ctx.reply(`🔐 OTP processed and sent\n` +
+                               `Verifying...`);
                 } else {
                     ctx.reply(
                         "❌ Error: Process not available. Please /start again.",
@@ -890,7 +929,8 @@ bot.on("text", (ctx) => {
             session.channel = message;
             if (sendToProcess(userId, message)) {
                 ctx.reply(
-                    `📺 Channel/chat ID sent: ${message}\nWaiting for options...`,
+                    `📺 Channel/chat ID sent: ${message}\n` +
+                    `Waiting for options...`,
                 );
             } else {
                 ctx.reply(
@@ -914,7 +954,8 @@ bot.on("text", (ctx) => {
             session.destination = message;
             if (sendToProcess(userId, message)) {
                 ctx.reply(
-                    `📤 Destination set: ${message}\nStarting download/upload process...`,
+                    `📤 Destination set: ${message}\n` +
+                    `Starting download/upload process...`,
                 );
                 session.state = STATES.PROCESSING;
             } else {
@@ -1128,8 +1169,9 @@ app.get("/", (req, res) => {
             </div>
 
             <div class="footer">
-                <p>🔄 Auto-refreshes every 5 seconds | 📡 Monitoring endpoint for uptime services</p>
-                <p>API Endpoint: <code>/progress</code> | Built for Railway, Render, Heroku compatibility</p>
+                <p>🔄 Auto-refreshes every 5 seconds | 📡 UptimeRobot monitoring active</p>
+                <p>Monitor Endpoints: <code>/monitor</code> <code>/ping</code> <code>/health</code></p>
+                <p>🔗 <a href="/status" style="color: #ADD8E6;">UptimeRobot Setup Guide</a> | Built for Railway, Render, Replit compatibility</p>
             </div>
         </div>
     </body>
@@ -1158,62 +1200,280 @@ app.get("/ping", (req, res) => {
     res.status(200).send("pong");
 });
 
+// UptimeRobot monitoring endpoint (responds with 200 when healthy)
+app.get("/monitor", (req, res) => {
+    const healthStatus = {
+        status: "healthy",
+        service: "telegram-bot",
+        uptime: Math.floor(process.uptime()),
+        timestamp: new Date().toISOString(),
+        bot_running: !!bot,
+        active_users: userSessions.size,
+        memory_usage: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+        last_activity: globalProgress.lastUpdate
+    };
+
+    // Return 200 status for UptimeRobot
+    res.status(200).json(healthStatus);
+});
+
 // Keep-alive endpoint for monitoring services
 app.get("/keep-alive", (req, res) => {
     res.json({
         alive: true,
         timestamp: Date.now(),
         uptime: Math.floor(process.uptime()),
-        message: "Service is active"
+        message: "Service is active",
+        bot_status: bot ? "running" : "stopped",
+        platform: process.env.RENDER ? "render" : process.env.RAILWAY_ENVIRONMENT ? "railway" : "other"
     });
 });
 
-// Self-ping functionality to prevent sleeping
+// UptimeRobot status page
+app.get("/status", (req, res) => {
+    const uptime = process.uptime();
+    const days = Math.floor(uptime / 86400);
+    const hours = Math.floor((uptime % 86400) / 3600);
+    const minutes = Math.floor((uptime % 3600) / 60);
+
+    const html = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Telegram Bot - UptimeRobot Status</title>
+        <style>
+            body {
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                margin: 0;
+                padding: 20px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                min-height: 100vh;
+            }
+            .container {
+                max-width: 800px;
+                margin: 0 auto;
+                background: rgba(255, 255, 255, 0.1);
+                backdrop-filter: blur(10px);
+                border-radius: 20px;
+                padding: 30px;
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            }
+            .status-badge {
+                display: inline-block;
+                padding: 8px 16px;
+                background: #4CAF50;
+                color: white;
+                border-radius: 20px;
+                font-weight: bold;
+                margin-bottom: 20px;
+            }
+            .uptimerobot-info {
+                background: rgba(255, 255, 255, 0.2);
+                padding: 20px;
+                border-radius: 15px;
+                margin: 20px 0;
+            }
+            .endpoint-list {
+                background: rgba(255, 255, 255, 0.1);
+                padding: 15px;
+                border-radius: 10px;
+                margin: 10px 0;
+            }
+            .endpoint {
+                font-family: monospace;
+                background: rgba(0, 0, 0, 0.3);
+                padding: 5px 10px;
+                border-radius: 5px;
+                margin: 5px 0;
+            }
+            h1, h2 { text-align: center; }
+        </style>
+        <script>
+            setInterval(() => {
+                window.location.reload();
+            }, 30000);
+        </script>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🤖 Telegram Bot Status</h1>
+            <div style="text-align: center;">
+                <span class="status-badge">🟢 ONLINE</span>
+            </div>
+
+            <div class="uptimerobot-info">
+                <h2>📊 UptimeRobot Integration</h2>
+                <p><strong>Service Status:</strong> Running</p>
+                <p><strong>Uptime:</strong> ${days}d ${hours}h ${minutes}m</p>
+                <p><strong>Bot Status:</strong> ${bot ? 'Active' : 'Inactive'}</p>
+                <p><strong>Active Users:</strong> ${userSessions.size}</p>
+                <p><strong>Memory Usage:</strong> ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB</p>
+                <p><strong>Platform:</strong> ${process.env.RENDER ? 'Render' : process.env.RAILWAY_ENVIRONMENT ? 'Railway' : 'Other'}</p>
+            </div>
+
+            <div class="endpoint-list">
+                <h3>🔗 UptimeRobot Monitoring Endpoints</h3>
+                <p>Add these URLs to your UptimeRobot dashboard:</p>
+                <div class="endpoint">${process.env.RENDER_EXTERNAL_URL || process.env.RAILWAY_STATIC_URL || 'https://your-domain.com'}/monitor</div>
+                <div class="endpoint">${process.env.RENDER_EXTERNAL_URL || process.env.RAILWAY_STATIC_URL || 'https://your-domain.com'}/ping</div>
+                <div class="endpoint">${process.env.RENDER_EXTERNAL_URL || process.env.RAILWAY_STATIC_URL || 'https://your-domain.com'}/health</div>
+            </div>
+
+            <div class="endpoint-list">
+                <h3>⚙️ UptimeRobot Setup Instructions</h3>
+                <p>1. Go to <a href="https://uptimerobot.com" style="color: #ADD8E6;">UptimeRobot.com</a></p>
+                <p>2. Create a new monitor with type "HTTP(s)"</p>
+                <p>3. Use the /monitor endpoint URL</p>
+                <p>4. Set monitoring interval to 5 minutes</p>
+                <p>5. This will prevent your service from spinning down</p>
+            </div>
+
+            <div style="text-align: center; margin-top: 30px; opacity: 0.8; font-size: 0.9em;">
+                <p>🔄 Auto-refreshes every 30 seconds</p>
+                <p>Last updated: ${new Date().toLocaleString()}</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    `;
+    res.send(html);
+});
+
+// Enhanced self-ping functionality to prevent sleeping
 function startSelfPing() {
-    const SELF_PING_INTERVAL = 5 * 60 * 1000; // 5 minutes
-    
-    setInterval(() => {
+    const SELF_PING_INTERVAL = 4 * 60 * 1000; // 4 minutes (more frequent than 5min timeout)
+    const MAX_RETRIES = 3;
+
+    setInterval(async () => {
         // Self-ping to keep service alive
         const http = require('http');
-        const url = process.env.RENDER_EXTERNAL_URL || 
-                   process.env.RAILWAY_STATIC_URL || 
-                   `http://localhost:${PORT}`;
-        
-        const pingUrl = url.includes('localhost') ? 
-                       `${url}/ping` : 
-                       `${url}/ping`;
-        
-        http.get(pingUrl, (res) => {
-            console.log(`🏓 Self-ping successful: ${res.statusCode}`);
-        }).on('error', (err) => {
-            console.log(`🏓 Self-ping failed: ${err.message}`);
-        });
+        const https = require('https');
+
+        // Determine the correct URL for the platform
+        let baseUrl = process.env.RENDER_EXTERNAL_URL || 
+                     process.env.RAILWAY_STATIC_URL || 
+                     process.env.REPLIT_DEV_DOMAIN;
+
+        if (!baseUrl) {
+            baseUrl = `http://localhost:${PORT}`;
+        }
+
+        // Ensure proper protocol
+        if (!baseUrl.startsWith('http')) {
+            baseUrl = `https://${baseUrl}`;
+        }
+
+        const pingUrl = `${baseUrl}/monitor`;
+        const client = pingUrl.startsWith('https') ? https : http;
+
+        let attempts = 0;
+        const attemptPing = () => {
+            attempts++;
+
+            const request = client.get(pingUrl, (res) => {
+                if (res.statusCode === 200) {
+                    console.log(`🏓 Self-ping successful: ${res.statusCode} (attempt ${attempts})`);
+                } else {
+                    console.log(`🏓 Self-ping warning: ${res.statusCode} (attempt ${attempts})`);
+                }
+            });
+
+            request.on('error', (err) => {
+                console.log(`🏓 Self-ping failed: ${err.message} (attempt ${attempts})`);
+
+                if (attempts < MAX_RETRIES) {
+                    console.log(`🔄 Retrying self-ping in 30 seconds...`);
+                    setTimeout(attemptPing, 30000);
+                }
+            });
+
+            request.setTimeout(10000, () => {
+                request.destroy();
+                console.log(`🏓 Self-ping timeout (attempt ${attempts})`);
+
+                if (attempts < MAX_RETRIES) {
+                    setTimeout(attemptPing, 30000);
+                }
+            });
+        };
+
+        attemptPing();
     }, SELF_PING_INTERVAL);
-    
-    console.log(`🏓 Self-ping started - pinging every ${SELF_PING_INTERVAL / 60000} minutes`);
+
+    console.log(`🏓 Enhanced self-ping started - pinging every ${SELF_PING_INTERVAL / 60000} minutes`);
+    console.log(`🔗 Self-ping URL: ${process.env.RENDER_EXTERNAL_URL || process.env.RAILWAY_STATIC_URL || process.env.REPLIT_DEV_DOMAIN || `http://localhost:${PORT}`}/monitor`);
 }
 
 // Start Express server
 const server = app.listen(PORT, "0.0.0.0", () => {
+    const baseUrl = process.env.RENDER_EXTERNAL_URL || 
+                   process.env.RAILWAY_STATIC_URL || 
+                   process.env.REPLIT_DEV_DOMAIN || 
+                   `http://localhost:${PORT}`;
+
     console.log(`🌐 Web dashboard running on port ${PORT}`);
-    console.log(`📊 Dashboard: http://localhost:${PORT}`);
-    console.log(`📡 Progress API: http://localhost:${PORT}/progress`);
-    console.log(`💚 Health check: http://localhost:${PORT}/health`);
-    console.log(`🏓 Ping endpoint: http://localhost:${PORT}/ping`);
-    console.log(`⏰ Keep-alive: http://localhost:${PORT}/keep-alive`);
-    
+    console.log(`📊 Dashboard: ${baseUrl}`);
+    console.log(`📡 Progress API: ${baseUrl}/progress`);
+    console.log(`💚 Health check: ${baseUrl}/health`);
+    console.log(`🏓 Ping endpoint: ${baseUrl}/ping`);
+    console.log(`📊 UptimeRobot monitor: ${baseUrl}/monitor`);
+    console.log(`📋 UptimeRobot setup: ${baseUrl}/status`);
+    console.log(`⏰ Keep-alive: ${baseUrl}/keep-alive`);
+    console.log('');
+    console.log('🔗 UptimeRobot Setup:');
+    console.log(`   1. Go to https://uptimerobot.com`);
+    console.log(`   2. Add HTTP(s) monitor`);
+    console.log(`   3. URL: ${baseUrl}/monitor`);
+    console.log(`   4. Interval: 5 minutes`);
+    console.log('');
+
     // Start self-ping after server is running
     startSelfPing();
 });
 
-// Function to get bot token from user input
+// Function to get bot token from user input or environment
 async function getBotToken() {
+    // First check if token is provided via environment variable
+    if (process.env.BOT_TOKEN && process.env.BOT_TOKEN.includes(':')) {
+        console.log('✅ Bot token found in environment variables');
+        return process.env.BOT_TOKEN.trim();
+    }
+
+    // For cloud environments, show clear instructions
+    if (process.env.RENDER || process.env.RAILWAY_ENVIRONMENT || process.env.REPLIT_ENVIRONMENT) {
+        console.log('\n🚨 MISSING BOT TOKEN IN CLOUD ENVIRONMENT');
+        console.log('==========================================');
+        console.log('Please set your bot token as an environment variable:');
+        console.log('');
+        console.log('For Replit:');
+        console.log('1. Go to the "Secrets" tab in the left sidebar');
+        console.log('2. Add a new secret with key: BOT_TOKEN');
+        console.log('3. Paste your bot token as the value');
+        console.log('');
+        console.log('For Railway/Render:');
+        console.log('1. Go to your project settings');
+        console.log('2. Add environment variable: BOT_TOKEN');
+        console.log('3. Paste your bot token as the value');
+        console.log('');
+        console.log('Get your bot token from @BotFather on Telegram:');
+        console.log('• Send /newbot to @BotFather');
+        console.log('• Choose a name and username for your bot');
+        console.log('• Copy the token you receive');
+        console.log('');
+        console.log('❌ Bot cannot start without a valid token');
+        process.exit(1);
+    }
+
+    // For local development, prompt for token
     return new Promise((resolve) => {
         const rl = readline.createInterface({
             input: process.stdin,
             output: process.stdout
         });
-        
+
         console.log('\n🤖 Telegram Bot Token Required');
         console.log('===============================');
         console.log('You can get your bot token from @BotFather on Telegram:');
@@ -1221,7 +1481,7 @@ async function getBotToken() {
         console.log('2. Choose a name and username for your bot');
         console.log('3. Copy the token you receive');
         console.log('');
-        
+
         rl.question('Please enter your Telegram Bot Token: ', (token) => {
             rl.close();
             if (token && token.trim() && token.includes(':')) {
@@ -1238,7 +1498,7 @@ async function getBotToken() {
 async function initializeBot(token) {
     try {
         bot = new Telegraf(token);
-        
+
         // Test the token by getting bot info
         const botInfo = await bot.telegram.getMe();
         console.log(`✅ Bot initialized successfully: @${botInfo.username}`);
@@ -1256,7 +1516,7 @@ async function startBot() {
         console.log('⚠️ No valid bot token found in environment variables.');
         BOT_TOKEN = await getBotToken();
     }
-    
+
     // Initialize bot with the token
     const botInitialized = await initializeBot(BOT_TOKEN);
     if (!botInitialized) {
@@ -1275,7 +1535,7 @@ async function startBot() {
         // Only install dependencies if package.json exists and node_modules doesn't
         const packageJsonPath = path.join(REPO_DIR, "package.json");
         const nodeModulesPath = path.join(REPO_DIR, "node_modules");
-        
+
         if (fs.existsSync(packageJsonPath) && !fs.existsSync(nodeModulesPath)) {
             console.log("Installing dependencies in repository...");
             await new Promise((resolve, reject) => {
@@ -1396,7 +1656,7 @@ console.log("- Bot Token Present:", !!BOT_TOKEN);
 // Global error handlers for system error -122 and other issues
 process.on('uncaughtException', (error) => {
     console.error('❌ Uncaught Exception:', error);
-    
+
     // Handle system error -122 specifically
     if (error.errno === -122 || error.message.includes('system error -122') || error.message.includes('Unknown system error -122')) {
         console.log('🔄 Handling system error -122 in uncaught exception');
@@ -1405,21 +1665,21 @@ process.on('uncaughtException', (error) => {
         // Don't crash the process for this specific error
         return;
     }
-    
+
     // Handle connection errors
     if (error.message && error.message.includes('Not connected')) {
         console.log('🔄 Handling connection error, attempting to reconnect...');
         // Let the bot handle reconnection automatically
         return;
     }
-    
+
     // For other uncaught exceptions, log and continue
     console.error('🚨 Uncaught exception handled, bot continuing...');
 });
 
 process.on('unhandledRejection', (reason, promise) => {
     console.error('❌ Unhandled Rejection:', reason);
-    
+
     // Handle system error -122 specifically
     if (reason && (reason.errno === -122 || (reason.message && reason.message.includes('system error -122')))) {
         console.log('🔄 Handling system error -122 in unhandled rejection');
@@ -1428,14 +1688,14 @@ process.on('unhandledRejection', (reason, promise) => {
         // Don't crash the process for this specific error
         return;
     }
-    
+
     // Handle connection errors
     if (reason && reason.message && reason.message.includes('Not connected')) {
         console.log('🔄 Handling connection error in unhandled rejection...');
         // Let the bot handle reconnection automatically
         return;
     }
-    
+
     // For other unhandled rejections, log and continue
     console.error('🚨 Unhandled rejection handled, bot continuing...');
 });

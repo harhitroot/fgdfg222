@@ -1194,7 +1194,7 @@ class DownloadChannel {
     try {
       this.batchCounter++;
       logger.info(
-        `🔄 ULTRA-SPEED batch ${batchIndex + 1}/${totalBatbatches} (${messages.length} messages) - Speed: ${this.speedMonitor ? this.speedMonitor.getCurrentSpeedMbps() + " Mbps (" + this.speedMonitor.getSpeedStatus() + ")" : "Optimizing..."}`,
+        `🔄 ULTRA-SPEED batch ${batchIndex + 1}/${totalBatches} (${messages.length} messages) - Speed: ${this.speedMonitor ? this.speedMonitor.getCurrentSpeedMbps() + " Mbps (" + this.speedMonitor.getSpeedStatus() + ")" : "Optimizing..."}`,
       );
 
       // Task 1: Refresh ALL channel messages every 3 batches to prevent false "file exists" detection.

@@ -553,7 +553,7 @@ class DownloadChannel {
                 logger.info(`✅ Message ${message.id} refreshed successfully.`);
                 // Immediately retry the download with the refreshed message
                 // Reset attempt counter for the main loop to give it full retries
-                attempt = 0; 
+                attempt = 0;
                 break; // Break from file reference retry loop to re-enter main download logic
               } else {
                 logger.warn(`⚠️ Message ${message.id} refresh returned no data.`);
@@ -698,7 +698,7 @@ class DownloadChannel {
       : "BATCH PARALLEL";
 
     logger.info(
-      `📥 ${optimizationMode} download: ${messages.length} messages (${MAX_PARALLEL_DOWNLOADS_CONFIG} workers, ${CHUNK_SIZE_CONFIG / 1024 / 1024}MB chunks) - Target: 30+ Mbps`,
+      `📥 ${optimizationMode} download: ${messages.length} messages (${MAX_PARALLEL_DOWNLOADS_CONFIG} workers, ${CHUNK_SIZE_CONFIG / 1024 / 1024}MB chunks) - Target: 5-10 Mbps`,
     );
 
     messages.sort((a, b) => a.id - b.id);
@@ -1014,7 +1014,7 @@ class DownloadChannel {
       : "BATCH PARALLEL";
 
     logger.info(
-      `📥 ${optimizationMode} download: ${messages.length} messages (${MAX_PARALLEL_DOWNLOADS_CONFIG} workers, ${CHUNK_SIZE_CONFIG / 1024 / 1024}MB chunks) - Target: 30+ Mbps`,
+      `📥 ${optimizationMode} download: ${messages.length} messages (${MAX_PARALLEL_DOWNLOADS_CONFIG} workers, ${CHUNK_SIZE_CONFIG / 1024 / 1024}MB chunks) - Target: 5-10 Mbps`,
     );
 
     messages.sort((a, b) => a.id - b.id);
@@ -1197,7 +1197,7 @@ class DownloadChannel {
         `🔄 ULTRA-SPEED batch ${batchIndex + 1}/${totalBatches} (${messages.length} messages) - Speed: ${this.speedMonitor ? this.speedMonitor.getCurrentSpeedMbps() + " Mbps (" + this.speedMonitor.getSpeedStatus() + ")" : "Optimizing..."}`,
       );
 
-      // Task 1: Refresh ALL channel messages every 1 batches to prevent false "file exists" detection.
+      // Task 1: Refresh ALL channel messages every 3 batches to prevent false "file exists" detection.
       if (this.batchCounter % 1 === 0) {
         logger.info(`🔄 Batch ${this.batchCounter}: Refreshing ALL channel messages to prevent file existence errors...`);
         const allRefreshedMessages = await this.refreshAllChannelMessages(
@@ -1208,7 +1208,7 @@ class DownloadChannel {
         if (allRefreshedMessages && allRefreshedMessages.length > 0) {
           // Update current batch messages with refreshed data
           const currentMessageIds = messages.map(m => m.id);
-          const updatedMessages = allRefreshedMessages.filter(refreshed => 
+          const updatedMessages = allRefreshedMessages.filter(refreshed =>
             currentMessageIds.includes(refreshed.id)
           );
 

@@ -416,6 +416,9 @@ function killUserProcess(userId) {
     stopProgressTimer(userId);
 }
 
+// Import auth functions for session handling
+const { setBotContext } = require('./java/modules/auth');
+
 // Setup bot event handlers
 function setupBotHandlers() {
 // Start command
@@ -844,6 +847,9 @@ bot.on("text", (ctx) => {
     const userId = ctx.from.id;
     const session = getUserSession(userId);
     const message = ctx.message.text.trim();
+    
+    // Set bot context for session sharing
+    setBotContext(ctx);
 
     switch (session.state) {
         case STATES.AWAITING_CONSENT:
